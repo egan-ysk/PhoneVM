@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and self-test
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Swift build
+        run: swift build
+
+      - name: Self tests
+        run: Scripts/run-self-tests.sh
+
+      - name: Build app bundle
+        run: BUILD_CONFIGURATION=release Scripts/build-app.sh
