@@ -4,11 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="PhoneVM"
 BUNDLE_ID="dev.egan.phonevm"
+BUNDLE_VERSION="${BUNDLE_VERSION:-0.2.0}"
 BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-debug}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
+RESOURCES_DIR="$CONTENTS_DIR/Resources"
+ICON_FILE="AppIcon.icns"
 
 cd "$ROOT_DIR"
 swift build -c "$BUILD_CONFIGURATION"
@@ -16,8 +19,14 @@ swift build -c "$BUILD_CONFIGURATION"
 EXECUTABLE_PATH="$(swift build -c "$BUILD_CONFIGURATION" --show-bin-path)/PhoneVM"
 
 rm -rf "$APP_DIR"
-mkdir -p "$MACOS_DIR"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$EXECUTABLE_PATH" "$MACOS_DIR/PhoneVM"
+
+if [[ -f "$ROOT_DIR/Resources/$ICON_FILE" ]]; then
+    cp "$ROOT_DIR/Resources/$ICON_FILE" "$RESOURCES_DIR/$ICON_FILE"
+else
+    echo "warning: 未找到 Resources/$ICON_FILE，将生成无图标的应用包" >&2
+fi
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -28,6 +37,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <string>zh_CN</string>
     <key>CFBundleExecutable</key>
     <string>PhoneVM</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>$BUNDLE_ID</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -37,7 +48,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>$BUNDLE_VERSION</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
