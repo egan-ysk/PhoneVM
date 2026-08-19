@@ -16,6 +16,10 @@ struct MenuContentView: View {
             }
 
             ForEach(model.virtualMachines) { virtualMachine in
+                if let index = model.virtualMachines.firstIndex(where: { $0.id == virtualMachine.id }),
+                   isFirstOfPlatform(virtualMachine, at: index) {
+                    sectionHeader(for: virtualMachine.platform)
+                }
                 virtualMachineMenu(virtualMachine)
             }
 
@@ -58,8 +62,23 @@ struct MenuContentView: View {
         }
     }
 
+    private func isFirstOfPlatform(_ virtualMachine: VirtualMachine, at index: Int) -> Bool {
+        index == 0 || model.virtualMachines[index - 1].platform != virtualMachine.platform
+    }
+
+    private func sectionHeader(for platform: VirtualMachinePlatform) -> some View {
+        switch platform {
+        case .android:
+            Label("Android", systemImage: "a.square.fill")
+        case .iOS:
+            Label("iOS", systemImage: "apple.terminal.on.rectangle")
+        }
+    }
+
     @ViewBuilder
     private func virtualMachineMenu(_ virtualMachine: VirtualMachine) -> some View {
+        let isOperating = model.isOperating(virtualMachine)
+
         Menu {
             Text(virtualMachine.subtitle)
             Text(virtualMachine.location.path)
@@ -72,21 +91,33 @@ struct MenuContentView: View {
             } label: {
                 Label("启动", systemImage: "play.fill")
             }
-            .disabled(virtualMachine.status == .running || virtualMachine.status == .starting)
+            .disabled(
+                isOperating || [VirtualMachineStatus.running, .starting, .stopping, .unavailable]
+                    .contains(virtualMachine.status)
+            )
 
             Button {
                 model.stop(virtualMachine)
             } label: {
                 Label("停止", systemImage: "stop.fill")
             }
-            .disabled(virtualMachine.status == .stopped || virtualMachine.status == .unavailable)
+            .disabled(isOperating || virtualMachine.status != .running)
 
             Button {
                 model.restart(virtualMachine)
             } label: {
                 Label("重启", systemImage: "arrow.clockwise")
             }
-            .disabled(virtualMachine.status == .unavailable)
+            .disabled(isOperating || virtualMachine.status != .running)
+
+            Divider()
+
+            Button {
+                model.screenshot(virtualMachine)
+            } label: {
+                Label("截屏到剪贴板", systemImage: "camera.on.rectangle")
+            }
+            .disabled(isOperating || virtualMachine.status != .running)
 
             Divider()
 
@@ -108,7 +139,7 @@ struct MenuContentView: View {
         switch (virtualMachine.platform, virtualMachine.status) {
         case (.android, .running), (.iOS, .running):
             return "play.rectangle.fill"
-        case (.android, .starting), (.iOS, .starting):
+        case (.android, .starting), (.iOS, .starting), (.android, .stopping), (.iOS, .stopping):
             return "hourglass"
         case (.android, _):
             return "apps.iphone"

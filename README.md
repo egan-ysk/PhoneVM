@@ -1,17 +1,17 @@
 # PhoneVM
 
-PhoneVM 是一个原生 macOS 菜单栏应用，用于快速发现、管理和启动本机 Android 虚拟机。项目第一版聚焦 Android Studio AVD 与 Genymotion，并通过 Provider 架构为后续 iPhone/iOS Simulator 管理能力预留扩展点。
+PhoneVM 是一个原生 macOS 菜单栏应用，用于快速发现、管理和启动本机手机虚拟机。当前支持 Android Studio AVD 与 iOS Simulator，并通过 Provider 架构为后续其他虚拟机管理能力预留扩展点。
 
 ## Features
 
 - macOS 菜单栏常驻入口，支持刷新、设置、退出和虚拟机快捷操作。
 - 自动扫描 Android Studio AVD：`~/.android/avd/*.ini` 与 `.avd/config.ini`。
-- 自动扫描 Genymotion 常见部署目录。
+- 自动扫描 iOS Simulator 设备（`xcrun simctl`）。
 - 支持添加、移除自定义虚拟机扫描目录。
 - 支持启动、停止、重启、打开所在目录等常用操作。
 - AVD 运行状态通过 `adb` 按需查询，避免高频后台轮询。
 - 配置持久化到当前用户的 Application Support 目录。
-- Provider 架构隔离 Android 与未来 iOS Simulator 支持。
+- Provider 架构隔离各平台实现，便于后续扩展。
 
 ## Requirements
 
@@ -19,7 +19,7 @@ PhoneVM 是一个原生 macOS 菜单栏应用，用于快速发现、管理和�
 - Swift toolchain with Swift Package Manager.
 - Android Studio AVD 管理能力需要本机已安装 Android SDK `emulator`。
 - AVD 停止和运行状态查询需要本机已安装 `adb`。
-- Genymotion 启动能力需要本机已安装 Genymotion。
+- iOS Simulator 管理能力需要本机已安装 Xcode 或 Command Line Tools（`xcrun`）。
 
 ## Installation
 
@@ -52,13 +52,12 @@ Scripts/run-self-tests.sh
 | 类型 | 扫描 | 启动 | 停止 | 状态 |
 | --- | --- | --- | --- | --- |
 | Android Studio AVD | 支持 | `emulator -avd <name>` | `adb emu kill` | `adb devices` + `adb emu avd name` |
-| Genymotion | 支持 | `player --vm-name <name>` | 暂不稳定支持 | 未知 |
-| iOS Simulator | 架构预留 | 后续支持 | 后续支持 | 后续支持 |
+| iOS Simulator | 支持 | `simctl boot` + `open -a Simulator` | `simctl shutdown` | `simctl list devices --json` |
 
 ## Architecture
 
 - `Domain`：虚拟机实体、状态、平台、Provider 协议。
-- `Providers`：Android AVD、Genymotion 与 iOS Simulator 预留实现。
+- `Providers`：Android AVD 与 iOS Simulator 实现。
 - `Services`：统一扫描、启动、停止、重启和 Finder 打开入口。
 - `Settings`：用户配置目录与 JSON 持久化。
 - `Infrastructure`：进程执行、工具定位、文件解析、文件系统辅助。

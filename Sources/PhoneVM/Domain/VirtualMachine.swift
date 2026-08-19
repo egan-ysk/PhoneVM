@@ -7,7 +7,6 @@ enum VirtualMachinePlatform: String, Codable, CaseIterable, Sendable {
 
 enum VirtualMachineProviderID: String, Codable, CaseIterable, Sendable {
     case androidAVD
-    case genymotion
     case iOSSimulator
 }
 
@@ -15,6 +14,7 @@ enum VirtualMachineStatus: String, Codable, Sendable {
     case stopped
     case starting
     case running
+    case stopping
     case unavailable
     case unknown
 
@@ -26,6 +26,8 @@ enum VirtualMachineStatus: String, Codable, Sendable {
             return "启动中"
         case .running:
             return "运行中"
+        case .stopping:
+            return "停止中"
         case .unavailable:
             return "不可用"
         case .unknown:
@@ -37,6 +39,7 @@ enum VirtualMachineStatus: String, Codable, Sendable {
 struct VirtualMachine: Identifiable, Codable, Equatable, Sendable {
     let id: String
     let name: String
+    let identifier: String
     let platform: VirtualMachinePlatform
     let providerID: VirtualMachineProviderID
     let providerName: String
@@ -46,7 +49,9 @@ struct VirtualMachine: Identifiable, Codable, Equatable, Sendable {
 
     var subtitle: String {
         var parts: [String] = [providerName, status.title]
-        if let apiLevel = metadata["apiLevel"], !apiLevel.isEmpty {
+        if let runtime = metadata["runtime"], !runtime.isEmpty {
+            parts.append(runtime)
+        } else if let apiLevel = metadata["apiLevel"], !apiLevel.isEmpty {
             parts.append("API \(apiLevel)")
         } else if let target = metadata["target"], !target.isEmpty {
             parts.append(target)

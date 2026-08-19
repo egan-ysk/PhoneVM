@@ -8,12 +8,18 @@ final class AppModel: ObservableObject {
     @Published private(set) var settings: AppSettings
     @Published private(set) var isScanning = false
     @Published private(set) var operationMessage: String?
-    @Published private(set) var lastErrorMessage: String?
+    @Published private(set) var scanErrorMessage: String?
+    @Published private(set) var operationErrorMessage: String?
+    @Published private(set) var operatingVirtualMachineIDs: Set<String> = []
     @Published var customDirectoryInput = ""
+
+    var lastErrorMessage: String? {
+        operationErrorMessage ?? scanErrorMessage
+    }
 
     private let settingsStore: SettingsStore
     private let manager: VirtualMachineManager
-    private let workerQueue = DispatchQueue(label: "PhoneVM.worker", qos: .utility)
+    private let workerQueue = DispatchQueue(label: "PhoneVM.worker", qos: .utility, attributes: .concurrent)
     private var settingsWindowController: SettingsWindowController?
     private var hasLoadedInitialData = false
 
@@ -40,7 +46,7 @@ final class AppModel: ObservableObject {
         }
 
         isScanning = true
-        lastErrorMessage = nil
+        scanErrorMessage = nil
         let settingsSnapshot = settings
         let manager = manager
 
@@ -60,29 +66,61 @@ final class AppModel: ObservableObject {
                     self.virtualMachines = virtualMachines
                     self.operationMessage = "已刷新 \(virtualMachines.count) 台虚拟机"
                 case .failure(let error):
-                    self.lastErrorMessage = Self.message(from: error)
+                    self.scanErrorMessage = Self.message(from: error)
                 }
             }
         }
     }
 
     func start(_ virtualMachine: VirtualMachine) {
-        updateStatus(for: virtualMachine, status: .starting)
-        runOperation(successMessage: "已发送启动命令：\(virtualMachine.name)") { manager in
+        runOperation(
+            for: virtualMachine,
+            status: .starting,
+            successMessage: "已发送启动命令：\(virtualMachine.name)"
+        ) { manager in
             try manager.start(virtualMachine)
         }
     }
 
     func stop(_ virtualMachine: VirtualMachine) {
-        runOperation(successMessage: "已发送停止命令：\(virtualMachine.name)") { manager in
+        runOperation(
+            for: virtualMachine,
+            status: .stopping,
+            successMessage: "已发送停止命令：\(virtualMachine.name)"
+        ) { manager in
             try manager.stop(virtualMachine)
         }
     }
 
     func restart(_ virtualMachine: VirtualMachine) {
-        updateStatus(for: virtualMachine, status: .starting)
-        runOperation(successMessage: "已发送重启命令：\(virtualMachine.name)") { manager in
+        runOperation(
+            for: virtualMachine,
+            status: .stopping,
+            successMessage: "已发送重启命令：\(virtualMachine.name)"
+        ) { manager in
             try manager.restart(virtualMachine)
+        }
+    }
+
+    func isOperating(_ virtualMachine: VirtualMachine) -> Bool {
+        operatingVirtualMachineIDs.contains(virtualMachine.id)
+    }
+
+    func screenshot(_ virtualMachine: VirtualMachine) {
+        runOperation(
+            for: virtualMachine,
+            status: virtualMachine.status,
+            successMessage: "已复制屏幕截图：\(virtualMachine.name)"
+        ) { manager in
+            let imageData = try manager.screenshot(virtualMachine)
+            guard let image = NSImage(data: imageData) else {
+                throw VirtualMachineProviderError.processFailed("截图数据无法解析为图片")
+            }
+
+            DispatchQueue.main.async {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.writeObjects([image])
+            }
         }
     }
 
@@ -124,7 +162,7 @@ final class AppModel: ObservableObject {
     func addCustomDirectory(_ url: URL) {
         let standardized = url.standardizedFileURL
         guard FileManager.default.directoryExists(at: standardized) else {
-            lastErrorMessage = "目录不存在：\(standardized.path)"
+            operationErrorMessage = "目录不存在：\(standardized.path)"
             return
         }
         guard !settings.customScanDirectories.contains(where: { $0.standardizedFileURL.path == standardized.path }) else {
@@ -142,10 +180,19 @@ final class AppModel: ObservableObject {
     }
 
     private func runOperation(
+        for virtualMachine: VirtualMachine,
+        status: VirtualMachineStatus,
         successMessage: String,
         operation: @escaping (VirtualMachineManager) throws -> Void
     ) {
-        lastErrorMessage = nil
+        guard !operatingVirtualMachineIDs.contains(virtualMachine.id) else {
+            return
+        }
+
+        operationErrorMessage = nil
+        operationMessage = nil
+        operatingVirtualMachineIDs.insert(virtualMachine.id)
+        updateStatus(for: virtualMachine, status: status)
         let manager = manager
 
         workerQueue.async { [weak self] in
@@ -158,14 +205,15 @@ final class AppModel: ObservableObject {
                     return
                 }
 
+                self.operatingVirtualMachineIDs.remove(virtualMachine.id)
                 switch result {
                 case .success:
                     self.operationMessage = successMessage
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        self.refreshVirtualMachines()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                        self?.refreshVirtualMachines()
                     }
                 case .failure(let error):
-                    self.lastErrorMessage = Self.message(from: error)
+                    self.operationErrorMessage = Self.message(from: error)
                     self.refreshVirtualMachines()
                 }
             }
@@ -188,7 +236,7 @@ final class AppModel: ObservableObject {
             try settingsStore.save(settings)
             refreshVirtualMachines()
         } catch {
-            lastErrorMessage = Self.message(from: error)
+            operationErrorMessage = Self.message(from: error)
         }
     }
 

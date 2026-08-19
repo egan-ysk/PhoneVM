@@ -4,8 +4,13 @@ final class SettingsStore {
     private let fileManager: FileManager
     private let settingsURL: URL
 
-    init(fileManager: FileManager = .default) {
+    init(fileManager: FileManager = .default, settingsURL: URL? = nil) {
         self.fileManager = fileManager
+        if let settingsURL {
+            self.settingsURL = settingsURL
+            return
+        }
+
         let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
         let appDirectory = applicationSupport.appendingPathComponent("PhoneVM", isDirectory: true)

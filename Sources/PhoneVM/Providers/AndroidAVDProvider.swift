@@ -7,12 +7,12 @@ final class AndroidAVDProvider: VirtualMachineProvider {
 
     private let fileManager: FileManager
     private let toolLocator: ToolLocator
-    private let processRunner: ProcessRunner
+    private let processRunner: any ProcessRunning
 
     init(
         fileManager: FileManager = .default,
         toolLocator: ToolLocator = ToolLocator(),
-        processRunner: ProcessRunner = ProcessRunner()
+        processRunner: any ProcessRunning = ProcessRunner()
     ) {
         self.fileManager = fileManager
         self.toolLocator = toolLocator
@@ -25,19 +25,20 @@ final class AndroidAVDProvider: VirtualMachineProvider {
 
         return descriptors.map { descriptor in
             var metadata = descriptor.metadata
-            if let serial = runningDevices?[descriptor.name] {
+            if let serial = runningDevices?[descriptor.identifier] {
                 metadata["serial"] = serial
             }
 
             return VirtualMachine(
-                id: "\(id.rawValue):\(descriptor.name)",
+                id: "\(id.rawValue):\(descriptor.directory.path)",
                 name: descriptor.name,
+                identifier: descriptor.identifier,
                 platform: platform,
                 providerID: id,
                 providerName: displayName,
                 location: descriptor.directory,
                 metadata: metadata,
-                status: status(for: descriptor.name, runningDevices: runningDevices)
+                status: status(for: descriptor.identifier, runningDevices: runningDevices)
             )
         }
         .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -53,7 +54,7 @@ final class AndroidAVDProvider: VirtualMachineProvider {
 
         try processRunner.launchDetached(
             executableURL: emulator,
-            arguments: ["-avd", virtualMachine.name]
+            arguments: ["-avd", virtualMachine.identifier]
         )
     }
 
@@ -62,7 +63,7 @@ final class AndroidAVDProvider: VirtualMachineProvider {
             throw VirtualMachineProviderError.executableNotFound("adb")
         }
 
-        let serial = virtualMachine.metadata["serial"] ?? runningAVDDevices()?[virtualMachine.name]
+        let serial = virtualMachine.metadata["serial"] ?? runningAVDDevices()?[virtualMachine.identifier]
         guard let serial else {
             throw VirtualMachineProviderError.unsupportedOperation("未找到正在运行的模拟器实例")
         }
@@ -80,7 +81,34 @@ final class AndroidAVDProvider: VirtualMachineProvider {
 
     func status(for virtualMachine: VirtualMachine) throws -> VirtualMachineStatus {
         let runningDevices = runningAVDDevices()
-        return status(for: virtualMachine.name, runningDevices: runningDevices)
+        return status(for: virtualMachine.identifier, runningDevices: runningDevices)
+    }
+
+    func screenshot(_ virtualMachine: VirtualMachine) throws -> Data {
+        guard let adb = toolLocator.adbExecutable() else {
+            throw VirtualMachineProviderError.executableNotFound("adb")
+        }
+
+        let serial = virtualMachine.metadata["serial"] ?? runningAVDDevices()?[virtualMachine.identifier]
+        guard let serial else {
+            throw VirtualMachineProviderError.unsupportedOperation("未找到正在运行的模拟器实例")
+        }
+
+        let output = try processRunner.runAndCaptureBinary(
+            executableURL: adb,
+            arguments: ["-s", serial, "exec-out", "screencap", "-p"],
+            timeout: 15
+        )
+        guard output.exitCode == 0, !output.standardOutput.isEmpty else {
+            throw VirtualMachineProviderError.processFailed(output.standardError.trimmedOrDefault("截取模拟器屏幕失败"))
+        }
+
+        let imageData = output.standardOutput
+        guard imageData.count > 8, imageData[0] == 0x89, imageData[1] == 0x50 else {
+            throw VirtualMachineProviderError.processFailed("截屏数据无效（非 PNG）")
+        }
+
+        return imageData
     }
 
     private func status(for name: String, runningDevices: [String: String]?) -> VirtualMachineStatus {
@@ -116,9 +144,7 @@ final class AndroidAVDProvider: VirtualMachineProvider {
     }
 
     private func defaultAVDRoots() -> [URL] {
-        [
-            toolLocator.homeDirectory.appendingPathComponent(".android/avd", isDirectory: true)
-        ]
+        toolLocator.androidAVDDirectories()
     }
 
     private func avdCandidates(in root: URL) -> [URL] {
@@ -169,32 +195,50 @@ final class AndroidAVDProvider: VirtualMachineProvider {
 
     private func descriptor(fromINIFile iniFile: URL) -> AVDDescriptor? {
         let values = KeyValueFileParser.parseFile(at: iniFile)
-        let directory: URL?
-
-        if let path = values["path"], !path.isEmpty {
-            directory = URL(fileURLWithPath: path, isDirectory: true)
-        } else if let relativePath = values["path.rel"], !relativePath.isEmpty {
-            directory = toolLocator.homeDirectory
-                .appendingPathComponent(".android", isDirectory: true)
-                .appendingPathComponent(relativePath, isDirectory: true)
-        } else {
-            directory = nil
-        }
-
-        guard let directory, fileManager.directoryExists(at: directory) else {
+        guard let directory = avdDirectory(from: values, iniFile: iniFile),
+              fileManager.directoryExists(at: directory) else {
             return nil
         }
 
         let config = KeyValueFileParser.parseFile(at: directory.appendingPathComponent("config.ini"))
-        let name = values["avd.ini.displayname"] ?? values["avdId"] ?? iniFile.deletingPathExtension().lastPathComponent
-        return AVDDescriptor(name: name, directory: directory.standardizedFileURL, metadata: avdMetadata(from: config))
+        let fallbackIdentifier = iniFile.deletingPathExtension().lastPathComponent
+        let identifier = values["avdId"] ?? config["AvdId"] ?? fallbackIdentifier
+        let name = values["avd.ini.displayname"] ?? config["avd.ini.displayname"] ?? identifier
+        return AVDDescriptor(
+            name: name,
+            identifier: identifier,
+            directory: directory.standardizedFileURL,
+            metadata: avdMetadata(from: config)
+        )
     }
 
     private func descriptor(fromAVDDirectory directory: URL) -> AVDDescriptor {
         let config = KeyValueFileParser.parseFile(at: directory.appendingPathComponent("config.ini"))
-        let fallbackName = directory.deletingPathExtension().lastPathComponent
-        let name = config["AvdId"] ?? config["avd.ini.displayname"] ?? fallbackName
-        return AVDDescriptor(name: name, directory: directory.standardizedFileURL, metadata: avdMetadata(from: config))
+        let fallbackIdentifier = directory.deletingPathExtension().lastPathComponent
+        let identifier = config["AvdId"] ?? fallbackIdentifier
+        let name = config["avd.ini.displayname"] ?? identifier
+        return AVDDescriptor(
+            name: name,
+            identifier: identifier,
+            directory: directory.standardizedFileURL,
+            metadata: avdMetadata(from: config)
+        )
+    }
+
+    private func avdDirectory(from values: [String: String], iniFile: URL) -> URL? {
+        if let path = values["path"], !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+
+        guard let relativePath = values["path.rel"], !relativePath.isEmpty else {
+            return nil
+        }
+
+        let iniDirectory = iniFile.deletingLastPathComponent()
+        let candidateRoots = [iniDirectory, iniDirectory.deletingLastPathComponent()] + toolLocator.androidUserDirectories()
+        return candidateRoots
+            .map { $0.appendingPathComponent(relativePath, isDirectory: true).standardizedFileURL }
+            .first { fileManager.directoryExists(at: $0) }
     }
 
     private func avdMetadata(from config: [String: String]) -> [String: String] {
@@ -242,12 +286,16 @@ final class AndroidAVDProvider: VirtualMachineProvider {
                 return String(columns[0])
             }
 
-        var result: [String: String] = [:]
-        for serial in serials {
+        var result = [String: String]()
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: serials.count) { index in
+            let serial = serials[index]
             guard let avdName = avdName(forSerial: serial, adb: adb) else {
-                continue
+                return
             }
+            lock.lock()
             result[avdName] = serial
+            lock.unlock()
         }
         return result
     }
@@ -270,6 +318,7 @@ final class AndroidAVDProvider: VirtualMachineProvider {
 
 private struct AVDDescriptor {
     let name: String
+    let identifier: String
     let directory: URL
     let metadata: [String: String]
 }

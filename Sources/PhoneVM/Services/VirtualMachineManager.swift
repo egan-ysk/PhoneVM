@@ -6,7 +6,7 @@ final class VirtualMachineManager {
 
     init(providers: [VirtualMachineProvider] = [
         AndroidAVDProvider(),
-        GenymotionProvider()
+        IOSSimulatorProvider()
     ]) {
         self.providers = providers
     }
@@ -44,12 +44,29 @@ final class VirtualMachineManager {
     func restart(_ virtualMachine: VirtualMachine) throws {
         let provider = try provider(for: virtualMachine)
         try provider.stop(virtualMachine)
-        Thread.sleep(forTimeInterval: 1.0)
-        try provider.start(virtualMachine)
+
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            switch try provider.status(for: virtualMachine) {
+            case .stopped:
+                try provider.start(virtualMachine)
+                return
+            case .unavailable:
+                throw VirtualMachineProviderError.invalidVirtualMachine("虚拟机已不可用")
+            case .starting, .running, .stopping, .unknown:
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+        }
+
+        throw VirtualMachineProviderError.processFailed("等待虚拟机停止超时：\(virtualMachine.name)")
     }
 
     func refreshStatus(for virtualMachine: VirtualMachine) throws -> VirtualMachineStatus {
         try provider(for: virtualMachine).status(for: virtualMachine)
+    }
+
+    func screenshot(_ virtualMachine: VirtualMachine) throws -> Data {
+        try provider(for: virtualMachine).screenshot(virtualMachine)
     }
 
     func revealInFinder(_ virtualMachine: VirtualMachine) {

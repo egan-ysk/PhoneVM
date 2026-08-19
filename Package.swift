@@ -1,9 +1,10 @@
-// swift-tools-version:4.0
+// swift-tools-version:6.0
 
 import PackageDescription
 
 let package = Package(
     name: "PhoneVM",
+    platforms: [.macOS(.v15)],
     products: [
         .executable(
             name: "PhoneVM",
@@ -12,9 +13,16 @@ let package = Package(
     ],
     dependencies: [],
     targets: [
-        .target(
+        .executableTarget(
             name: "PhoneVM",
-            path: "Sources/PhoneVM"
+            path: "Sources/PhoneVM",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "PhoneVMTests",
+            dependencies: ["PhoneVM"],
+            path: "Tests/PhoneVMTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]
 )

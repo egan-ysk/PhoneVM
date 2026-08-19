@@ -14,6 +14,7 @@ protocol VirtualMachineProvider {
     func start(_ virtualMachine: VirtualMachine) throws
     func stop(_ virtualMachine: VirtualMachine) throws
     func status(for virtualMachine: VirtualMachine) throws -> VirtualMachineStatus
+    func screenshot(_ virtualMachine: VirtualMachine) throws -> Data
 }
 
 enum VirtualMachineProviderError: LocalizedError {

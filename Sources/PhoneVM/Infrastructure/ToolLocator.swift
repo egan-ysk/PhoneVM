@@ -28,6 +28,30 @@ struct ToolLocator {
         return directories.uniqueStandardized()
     }
 
+    func androidAVDDirectories() -> [URL] {
+        if let value = environment["ANDROID_AVD_HOME"], !value.isEmpty {
+            return [URL(fileURLWithPath: value, isDirectory: true).standardizedFileURL]
+        }
+
+        if let value = environment["ANDROID_USER_HOME"], !value.isEmpty {
+            return [
+                URL(fileURLWithPath: value, isDirectory: true)
+                    .appendingPathComponent("avd", isDirectory: true)
+                    .standardizedFileURL
+            ]
+        }
+
+        return [homeDirectory.appendingPathComponent(".android/avd", isDirectory: true)]
+    }
+
+    func androidUserDirectories() -> [URL] {
+        var directories = [homeDirectory.appendingPathComponent(".android", isDirectory: true)]
+        if let value = environment["ANDROID_USER_HOME"], !value.isEmpty {
+            directories.insert(URL(fileURLWithPath: value, isDirectory: true), at: 0)
+        }
+        return directories.uniqueStandardized()
+    }
+
     func androidEmulatorExecutable() -> URL? {
         for sdkDirectory in androidSDKDirectories() {
             let candidate = sdkDirectory.appendingPathComponent("emulator/emulator", isDirectory: false)
@@ -48,20 +72,20 @@ struct ToolLocator {
         return executableOnPATH(named: "adb")
     }
 
-    func genymotionPlayerExecutable() -> URL? {
-        if let value = environment["GENYMOTION_PLAYER"], !value.isEmpty {
-            let candidate = URL(fileURLWithPath: value, isDirectory: false)
-            if fileManager.isExecutableFile(atPath: candidate.path) {
-                return candidate
-            }
+    func xcrunExecutable() -> URL? {
+        let systemXcrun = URL(fileURLWithPath: "/usr/bin/xcrun", isDirectory: false)
+        if fileManager.isExecutableFile(atPath: systemXcrun.path) {
+            return systemXcrun
         }
+        return executableOnPATH(named: "xcrun")
+    }
 
-        let candidates = [
-            URL(fileURLWithPath: "/Applications/Genymotion.app/Contents/MacOS/player", isDirectory: false),
-            homeDirectory.appendingPathComponent("Applications/Genymotion.app/Contents/MacOS/player", isDirectory: false)
-        ]
-
-        return candidates.first { fileManager.isExecutableFile(atPath: $0.path) }
+    func openExecutable() -> URL? {
+        let systemOpen = URL(fileURLWithPath: "/usr/bin/open", isDirectory: false)
+        if fileManager.isExecutableFile(atPath: systemOpen.path) {
+            return systemOpen
+        }
+        return executableOnPATH(named: "open")
     }
 
     private func executableOnPATH(named name: String) -> URL? {
