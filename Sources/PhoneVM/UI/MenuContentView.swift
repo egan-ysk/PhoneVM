@@ -94,6 +94,13 @@ struct MenuContentView: View {
                 Label(model.isOperating(device) ? "正在截屏…" : "截屏到剪贴板", systemImage: "camera.on.rectangle")
             }
             .disabled(model.isOperating(device) || !device.canScreenshot)
+
+            Button {
+                model.screenshot(device, destination: .desktop)
+            } label: {
+                Label("截屏保存到桌面", systemImage: "square.and.arrow.down")
+            }
+            .disabled(model.isOperating(device) || !device.canScreenshot)
         } label: {
             Label("\(device.name) · \(device.connectionState.title)", systemImage: "iphone")
         }
@@ -149,6 +156,13 @@ struct MenuContentView: View {
                 model.screenshot(virtualMachine)
             } label: {
                 Label("截屏到剪贴板", systemImage: "camera.on.rectangle")
+            }
+            .disabled(isOperating || virtualMachine.status != .running)
+
+            Button {
+                model.screenshot(virtualMachine, destination: .desktop)
+            } label: {
+                Label("截屏保存到桌面", systemImage: "square.and.arrow.down")
             }
             .disabled(isOperating || virtualMachine.status != .running)
 

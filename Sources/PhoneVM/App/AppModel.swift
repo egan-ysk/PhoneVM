@@ -2,6 +2,11 @@ import AppKit
 import Foundation
 import SwiftUI
 
+enum ScreenshotDestination {
+    case clipboard
+    case desktop
+}
+
 @available(macOS 15.0, *)
 final class AppModel: ObservableObject {
     @Published private(set) var virtualMachines: [VirtualMachine] = []
@@ -24,6 +29,7 @@ final class AppModel: ObservableObject {
     private let manager: VirtualMachineManager
     private let physicalDeviceManager: PhysicalDeviceManager
     private let copyScreenshot: (Data) throws -> Void
+    private let saveScreenshotToDesktop: (Data) throws -> URL
     private let workerQueue = DispatchQueue(label: "PhoneVM.worker", qos: .utility, attributes: .concurrent)
     private var settingsWindowController: SettingsWindowController?
     private var needsAnotherRefresh = false
@@ -32,12 +38,14 @@ final class AppModel: ObservableObject {
         settingsStore: SettingsStore = SettingsStore(),
         manager: VirtualMachineManager = VirtualMachineManager(),
         physicalDeviceManager: PhysicalDeviceManager = PhysicalDeviceManager(),
-        copyScreenshot: @escaping (Data) throws -> Void = ScreenshotClipboard.copy
+        copyScreenshot: @escaping (Data) throws -> Void = ScreenshotClipboard.copy,
+        saveScreenshotToDesktop: @escaping (Data) throws -> URL = { try ScreenshotDesktopStore().save($0) }
     ) {
         self.settingsStore = settingsStore
         self.manager = manager
         self.physicalDeviceManager = physicalDeviceManager
         self.copyScreenshot = copyScreenshot
+        self.saveScreenshotToDesktop = saveScreenshotToDesktop
         self.settings = settingsStore.load()
         self.iOSScreenshotToolPathInput = self.settings.iOSScreenshotToolPath ?? ""
     }
@@ -130,35 +138,44 @@ final class AppModel: ObservableObject {
         operatingDeviceIDs.contains(device.id)
     }
 
-    func screenshot(_ virtualMachine: VirtualMachine) {
-        captureScreenshot(id: virtualMachine.id, name: virtualMachine.name) { [manager] in
+    func screenshot(_ virtualMachine: VirtualMachine, destination: ScreenshotDestination = .clipboard) {
+        captureScreenshot(id: virtualMachine.id, name: virtualMachine.name, destination: destination) { [manager] in
             try manager.screenshot(virtualMachine)
         }
     }
 
-    func screenshot(_ device: PhysicalDevice) {
+    func screenshot(_ device: PhysicalDevice, destination: ScreenshotDestination = .clipboard) {
         let settingsSnapshot = settings
-        captureScreenshot(id: device.id, name: device.name) { [physicalDeviceManager] in
+        captureScreenshot(id: device.id, name: device.name, destination: destination) { [physicalDeviceManager] in
             try physicalDeviceManager.screenshot(device, settings: settingsSnapshot)
         }
     }
 
-    private func captureScreenshot(id: String, name: String, capture: @escaping () throws -> Data) {
+    private func captureScreenshot(
+        id: String, name: String, destination: ScreenshotDestination, capture: @escaping () throws -> Data
+    ) {
         guard operatingDeviceIDs.insert(id).inserted else { return }
         operationErrorMessage = nil
         operationMessage = nil
+        let saveToDesktop = saveScreenshotToDesktop
         workerQueue.async { [weak self] in
             let result = Result {
                 let data = try capture()
                 try ScreenshotClipboard.validate(data)
-                return data
+                let savedURL = destination == .desktop ? try saveToDesktop(data) : nil
+                return (data: data, savedURL: savedURL)
             }
             DispatchQueue.main.async {
                 guard let self else { return }
                 defer { self.operatingDeviceIDs.remove(id) }
                 do {
-                    try self.copyScreenshot(result.get())
-                    self.operationMessage = "已复制屏幕截图：\(name)"
+                    let output = try result.get()
+                    if let url = output.savedURL {
+                        self.operationMessage = "已保存到桌面：\(url.lastPathComponent)"
+                    } else {
+                        try self.copyScreenshot(output.data)
+                        self.operationMessage = "已复制屏幕截图：\(name)"
+                    }
                 } catch {
                     self.operationErrorMessage = Self.message(from: error)
                     self.refreshVirtualMachines()

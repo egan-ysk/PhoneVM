@@ -238,6 +238,93 @@ final class PhysicalDeviceTests: XCTestCase {
         withExtendedLifetime(subscription) {}
     }
 
+    func testDesktopScreenshotWritesOffMainThreadAndSharesOperationLockWithClipboard() throws {
+        let provider = StubPhysicalProvider(platform: .iOS)
+        let device = PhysicalDevice(name: "Phone", identifier: "udid", platform: .iOS, connectionState: .connected)
+        provider.scanHandler = { [device] }
+        let png = try imageData()
+        provider.screenshotHandler = { _ in png }
+        let directory = root!
+        let model = AppModel(
+            settingsStore: SettingsStore(settingsURL: root.appendingPathComponent("settings.json")),
+            manager: VirtualMachineManager(providers: []),
+            physicalDeviceManager: PhysicalDeviceManager(providers: [provider]),
+            copyScreenshot: { _ in XCTFail("Desktop action must not change the clipboard") },
+            saveScreenshotToDesktop: { data in
+                XCTAssertFalse(Thread.isMainThread)
+                return try ScreenshotDesktopStore(desktopDirectory: directory).save(data)
+            }
+        )
+        let saved = expectation(description: "saved to desktop")
+        let subscription = model.$operationMessage.compactMap { $0 }.sink { message in
+            XCTAssertTrue(message.hasPrefix("已保存到桌面：PhoneVM-"))
+            saved.fulfill()
+        }
+        model.screenshot(device, destination: .desktop)
+        model.screenshot(device)
+        XCTAssertTrue(model.isOperating(device))
+        wait(for: [saved], timeout: 3)
+        XCTAssertFalse(model.isOperating(device))
+        XCTAssertEqual(provider.screenshotCount, 1)
+        let files = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "png" }
+        XCTAssertEqual(files.count, 1)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(files.first)), png)
+        withExtendedLifetime(subscription) {}
+    }
+
+    func testDesktopWriteFailureShowsErrorAndReleasesDevice() throws {
+        let provider = StubPhysicalProvider(platform: .iOS)
+        let device = PhysicalDevice(name: "Phone", identifier: "udid", platform: .iOS, connectionState: .connected)
+        provider.scanHandler = { [device] }
+        let png = try imageData()
+        provider.screenshotHandler = { _ in png }
+        let model = AppModel(
+            settingsStore: SettingsStore(settingsURL: root.appendingPathComponent("settings.json")),
+            manager: VirtualMachineManager(providers: []),
+            physicalDeviceManager: PhysicalDeviceManager(providers: [provider]),
+            copyScreenshot: { _ in XCTFail("Save failure must not fall back to clipboard") },
+            saveScreenshotToDesktop: { _ in throw VirtualMachineProviderError.processFailed("桌面写入失败") }
+        )
+        let failed = expectation(description: "save failed")
+        let subscription = model.$operationErrorMessage.compactMap { $0 }.sink { _ in failed.fulfill() }
+        model.screenshot(device, destination: .desktop)
+        wait(for: [failed], timeout: 3)
+        XCTAssertEqual(model.operationErrorMessage, "桌面写入失败")
+        XCTAssertFalse(model.operationMessage?.contains("已保存") == true)
+        XCTAssertFalse(model.isOperating(device))
+        withExtendedLifetime(subscription) {}
+    }
+
+    func testSimulatorScreenshotSupportsDesktopDestination() throws {
+        let png = try imageData()
+        let runner = DeviceProcessRunner()
+        runner.binary = { command in
+            XCTAssertEqual(command.arguments, ["simctl", "io", "simulator-udid", "screenshot", "-"])
+            return .init(exitCode: 0, standardOutput: png, standardError: "")
+        }
+        let simulator = VirtualMachine(
+            id: "simulator", name: "Simulator", identifier: "simulator-udid", platform: .iOS,
+            providerID: .iOSSimulator, providerName: "iOS Simulator", location: root,
+            metadata: [:], status: .running
+        )
+        let directory = root!
+        let model = AppModel(
+            settingsStore: SettingsStore(settingsURL: root.appendingPathComponent("settings.json")),
+            manager: VirtualMachineManager(providers: [IOSSimulatorProvider(processRunner: runner)]),
+            physicalDeviceManager: PhysicalDeviceManager(providers: []),
+            copyScreenshot: { _ in XCTFail("Desktop action must not copy") },
+            saveScreenshotToDesktop: { try ScreenshotDesktopStore(desktopDirectory: directory).save($0) }
+        )
+        let saved = expectation(description: "simulator saved")
+        let subscription = model.$operationMessage.compactMap { $0 }.sink { _ in saved.fulfill() }
+        model.screenshot(simulator, destination: .desktop)
+        wait(for: [saved], timeout: 3)
+        XCTAssertTrue(model.operationMessage?.hasPrefix("已保存到桌面") == true)
+        XCTAssertFalse(model.isOperating(simulator))
+        withExtendedLifetime(subscription) {}
+    }
+
     private func imageData() throws -> Data {
         let bitmap = try XCTUnwrap(NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2, bitsPerSample: 8,

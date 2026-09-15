@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="PhoneVM"
 BUNDLE_ID="dev.egan.phonevm"
-BUNDLE_VERSION="${BUNDLE_VERSION:-0.3.0}"
+BUNDLE_VERSION="${BUNDLE_VERSION:-0.4.0}"
 BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-debug}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
@@ -60,6 +60,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <string>15.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>将您选择的设备截屏保存到桌面。</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 Egan</string>
 </dict>
