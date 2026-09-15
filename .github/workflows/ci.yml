@@ -24,5 +24,8 @@ jobs:
       - name: Self tests
         run: Scripts/run-self-tests.sh
 
+      - name: Unit tests
+        run: swift test
+
       - name: Build app bundle
         run: BUILD_CONFIGURATION=release Scripts/build-app.sh

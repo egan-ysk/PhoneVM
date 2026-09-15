@@ -5,13 +5,16 @@ import SwiftUI
 @available(macOS 15.0, *)
 final class AppModel: ObservableObject {
     @Published private(set) var virtualMachines: [VirtualMachine] = []
+    @Published private(set) var physicalDevices: [PhysicalDevice] = []
+    @Published private(set) var physicalDeviceWarnings: [String] = []
     @Published private(set) var settings: AppSettings
     @Published private(set) var isScanning = false
     @Published private(set) var operationMessage: String?
     @Published private(set) var scanErrorMessage: String?
     @Published private(set) var operationErrorMessage: String?
-    @Published private(set) var operatingVirtualMachineIDs: Set<String> = []
+    @Published private(set) var operatingDeviceIDs: Set<String> = []
     @Published var customDirectoryInput = ""
+    @Published var iOSScreenshotToolPathInput = ""
 
     var lastErrorMessage: String? {
         operationErrorMessage ?? scanErrorMessage
@@ -19,29 +22,34 @@ final class AppModel: ObservableObject {
 
     private let settingsStore: SettingsStore
     private let manager: VirtualMachineManager
+    private let physicalDeviceManager: PhysicalDeviceManager
+    private let copyScreenshot: (Data) throws -> Void
     private let workerQueue = DispatchQueue(label: "PhoneVM.worker", qos: .utility, attributes: .concurrent)
     private var settingsWindowController: SettingsWindowController?
-    private var hasLoadedInitialData = false
+    private var needsAnotherRefresh = false
 
     init(
         settingsStore: SettingsStore = SettingsStore(),
-        manager: VirtualMachineManager = VirtualMachineManager()
+        manager: VirtualMachineManager = VirtualMachineManager(),
+        physicalDeviceManager: PhysicalDeviceManager = PhysicalDeviceManager(),
+        copyScreenshot: @escaping (Data) throws -> Void = ScreenshotClipboard.copy
     ) {
         self.settingsStore = settingsStore
         self.manager = manager
+        self.physicalDeviceManager = physicalDeviceManager
+        self.copyScreenshot = copyScreenshot
         self.settings = settingsStore.load()
+        self.iOSScreenshotToolPathInput = self.settings.iOSScreenshotToolPath ?? ""
     }
 
     func refreshIfNeeded() {
-        guard !hasLoadedInitialData else {
-            return
-        }
-        hasLoadedInitialData = true
+        // 每次打开菜单刷新连接状态，仍由 isScanning 合并并发请求。
         refreshVirtualMachines()
     }
 
     func refreshVirtualMachines(includeRuntimeStatus: Bool = true) {
         guard !isScanning else {
+            needsAnotherRefresh = true
             return
         }
 
@@ -49,11 +57,14 @@ final class AppModel: ObservableObject {
         scanErrorMessage = nil
         let settingsSnapshot = settings
         let manager = manager
+        let physicalDeviceManager = physicalDeviceManager
 
         workerQueue.async { [weak self] in
             let result = Result {
                 try manager.scan(settings: settingsSnapshot, includeRuntimeStatus: includeRuntimeStatus)
             }
+            // 与模拟器扫描分别收集结果；单个平台缺少工具不影响其他设备。
+            let physicalResult = physicalDeviceManager.scan(settings: settingsSnapshot)
 
             DispatchQueue.main.async {
                 guard let self else {
@@ -61,12 +72,21 @@ final class AppModel: ObservableObject {
                 }
 
                 self.isScanning = false
+                self.physicalDevices = physicalResult.devices
+                self.physicalDeviceWarnings = physicalResult.warnings
                 switch result {
                 case .success(let virtualMachines):
                     self.virtualMachines = virtualMachines
-                    self.operationMessage = "已刷新 \(virtualMachines.count) 台虚拟机"
                 case .failure(let error):
                     self.scanErrorMessage = Self.message(from: error)
+                }
+                if self.operatingDeviceIDs.isEmpty,
+                   self.operationMessage == nil || self.operationMessage?.hasPrefix("已刷新") == true {
+                    self.operationMessage = "已刷新 \(self.virtualMachines.count) 台虚拟机、\(self.physicalDevices.count) 台真机"
+                }
+                if self.needsAnotherRefresh {
+                    self.needsAnotherRefresh = false
+                    self.refreshVirtualMachines()
                 }
             }
         }
@@ -103,25 +123,78 @@ final class AppModel: ObservableObject {
     }
 
     func isOperating(_ virtualMachine: VirtualMachine) -> Bool {
-        operatingVirtualMachineIDs.contains(virtualMachine.id)
+        operatingDeviceIDs.contains(virtualMachine.id)
+    }
+
+    func isOperating(_ device: PhysicalDevice) -> Bool {
+        operatingDeviceIDs.contains(device.id)
     }
 
     func screenshot(_ virtualMachine: VirtualMachine) {
-        runOperation(
-            for: virtualMachine,
-            status: virtualMachine.status,
-            successMessage: "已复制屏幕截图：\(virtualMachine.name)"
-        ) { manager in
-            let imageData = try manager.screenshot(virtualMachine)
-            guard let image = NSImage(data: imageData) else {
-                throw VirtualMachineProviderError.processFailed("截图数据无法解析为图片")
-            }
+        captureScreenshot(id: virtualMachine.id, name: virtualMachine.name) { [manager] in
+            try manager.screenshot(virtualMachine)
+        }
+    }
 
+    func screenshot(_ device: PhysicalDevice) {
+        let settingsSnapshot = settings
+        captureScreenshot(id: device.id, name: device.name) { [physicalDeviceManager] in
+            try physicalDeviceManager.screenshot(device, settings: settingsSnapshot)
+        }
+    }
+
+    private func captureScreenshot(id: String, name: String, capture: @escaping () throws -> Data) {
+        guard operatingDeviceIDs.insert(id).inserted else { return }
+        operationErrorMessage = nil
+        operationMessage = nil
+        workerQueue.async { [weak self] in
+            let result = Result {
+                let data = try capture()
+                try ScreenshotClipboard.validate(data)
+                return data
+            }
             DispatchQueue.main.async {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects([image])
+                guard let self else { return }
+                defer { self.operatingDeviceIDs.remove(id) }
+                do {
+                    try self.copyScreenshot(result.get())
+                    self.operationMessage = "已复制屏幕截图：\(name)"
+                } catch {
+                    self.operationErrorMessage = Self.message(from: error)
+                    self.refreshVirtualMachines()
+                }
             }
         }
+    }
+
+    var iOSScreenshotToolDescription: String {
+        if let url = ToolLocator().pymobiledevice3Executable(customPath: settings.iOSScreenshotToolPath) {
+            return "当前工具：\(url.path)"
+        }
+        return "未找到截屏工具，请安装 pymobiledevice3 或选择已安装的可执行文件"
+    }
+
+    func saveIOSScreenshotToolPath() {
+        let path = iOSScreenshotToolPathInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !path.isEmpty, ToolLocator().pymobiledevice3Executable(customPath: path) == nil {
+            operationErrorMessage = "请选择有效的 pymobiledevice3 可执行文件，不要填写 Python 命令或参数"
+            return
+        }
+        settings.iOSScreenshotToolPath = path.isEmpty ? nil : NSString(string: path).expandingTildeInPath
+        operationErrorMessage = nil
+        persistSettingsAndRefresh()
+    }
+
+    func chooseIOSScreenshotTool() {
+        let panel = NSOpenPanel()
+        panel.title = "选择 pymobiledevice3 可执行文件"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        iOSScreenshotToolPathInput = url.path
+        saveIOSScreenshotToolPath()
     }
 
     func revealInFinder(_ virtualMachine: VirtualMachine) {
@@ -185,13 +258,13 @@ final class AppModel: ObservableObject {
         successMessage: String,
         operation: @escaping (VirtualMachineManager) throws -> Void
     ) {
-        guard !operatingVirtualMachineIDs.contains(virtualMachine.id) else {
+        guard !operatingDeviceIDs.contains(virtualMachine.id) else {
             return
         }
 
         operationErrorMessage = nil
         operationMessage = nil
-        operatingVirtualMachineIDs.insert(virtualMachine.id)
+        operatingDeviceIDs.insert(virtualMachine.id)
         updateStatus(for: virtualMachine, status: status)
         let manager = manager
 
@@ -205,7 +278,7 @@ final class AppModel: ObservableObject {
                     return
                 }
 
-                self.operatingVirtualMachineIDs.remove(virtualMachine.id)
+                self.operatingDeviceIDs.remove(virtualMachine.id)
                 switch result {
                 case .success:
                     self.operationMessage = successMessage

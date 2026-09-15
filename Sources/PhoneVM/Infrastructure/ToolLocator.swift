@@ -88,6 +88,22 @@ struct ToolLocator {
         return executableOnPATH(named: "open")
     }
 
+    func pymobiledevice3Executable(customPath: String? = nil) -> URL? {
+        if let path = customPath?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
+            let url = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+            return fileManager.isExecutableFile(atPath: url.path) && !fileManager.directoryExists(at: url) ? url : nil
+        }
+        // Finder 启动的应用不继承交互式 shell 的 PATH，因此显式检查常用安装目录。
+        let candidates = [
+            homeDirectory.appendingPathComponent("Library/Application Support/PhoneVM/tools/pymobiledevice3/bin/pymobiledevice3"),
+            homeDirectory.appendingPathComponent(".local/bin/pymobiledevice3"),
+            URL(fileURLWithPath: "/opt/homebrew/bin/pymobiledevice3"),
+            URL(fileURLWithPath: "/usr/local/bin/pymobiledevice3")
+        ]
+        return candidates.first { fileManager.isExecutableFile(atPath: $0.path) && !fileManager.directoryExists(at: $0) }
+            ?? executableOnPATH(named: "pymobiledevice3")
+    }
+
     private func executableOnPATH(named name: String) -> URL? {
         let pathValue = environment["PATH"] ?? ""
         for rawDirectory in pathValue.split(separator: ":") {

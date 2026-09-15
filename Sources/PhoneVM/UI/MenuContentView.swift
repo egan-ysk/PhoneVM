@@ -8,8 +8,25 @@ struct MenuContentView: View {
     var body: some View {
         Group {
             if model.isScanning {
-                Label("正在扫描虚拟机", systemImage: "arrow.triangle.2.circlepath")
+                Label("正在扫描设备", systemImage: "arrow.triangle.2.circlepath")
             }
+
+            Label("真实设备", systemImage: "iphone")
+                .onAppear { model.refreshIfNeeded() }
+            if model.physicalDevices.isEmpty && !model.isScanning {
+                Text(model.physicalDeviceWarnings.isEmpty
+                     ? "未发现真机，请连接设备后刷新"
+                     : "设备扫描存在问题，请查看下方提示")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(model.physicalDevices) { device in
+                physicalDeviceMenu(device)
+            }
+            ForEach(model.physicalDeviceWarnings, id: \.self) { warning in
+                Text(warning).foregroundStyle(.secondary)
+            }
+
+            Divider()
 
             if model.virtualMachines.isEmpty && !model.isScanning {
                 Label("未发现虚拟机", systemImage: "tray")
@@ -57,13 +74,29 @@ struct MenuContentView: View {
                 Label("退出", systemImage: "power")
             }
         }
-        .onAppear {
-            model.refreshIfNeeded()
-        }
     }
 
     private func isFirstOfPlatform(_ virtualMachine: VirtualMachine, at index: Int) -> Bool {
         index == 0 || model.virtualMachines[index - 1].platform != virtualMachine.platform
+    }
+
+    private func physicalDeviceMenu(_ device: PhysicalDevice) -> some View {
+        Menu {
+            Text(device.detail)
+            Text(device.identifier).foregroundStyle(.secondary)
+            if let reason = device.screenshotUnavailableReason {
+                Text(reason).foregroundStyle(.secondary)
+            }
+            Divider()
+            Button {
+                model.screenshot(device)
+            } label: {
+                Label(model.isOperating(device) ? "正在截屏…" : "截屏到剪贴板", systemImage: "camera.on.rectangle")
+            }
+            .disabled(model.isOperating(device) || !device.canScreenshot)
+        } label: {
+            Label("\(device.name) · \(device.connectionState.title)", systemImage: "iphone")
+        }
     }
 
     private func sectionHeader(for platform: VirtualMachinePlatform) -> some View {

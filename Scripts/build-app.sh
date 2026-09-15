@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="PhoneVM"
 BUNDLE_ID="dev.egan.phonevm"
-BUNDLE_VERSION="${BUNDLE_VERSION:-0.2.0}"
+BUNDLE_VERSION="${BUNDLE_VERSION:-0.3.0}"
 BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-debug}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
@@ -14,7 +14,12 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 ICON_FILE="AppIcon.icns"
 
 cd "$ROOT_DIR"
-swift build -c "$BUILD_CONFIGURATION"
+if [[ "$BUILD_CONFIGURATION" == "release" ]]; then
+    # 发布产物不保留构建机器的源码绝对路径。
+    swift build -c release -Xswiftc -gnone -Xswiftc -file-prefix-map -Xswiftc "$ROOT_DIR=/PhoneVM"
+else
+    swift build -c "$BUILD_CONFIGURATION"
+fi
 
 EXECUTABLE_PATH="$(swift build -c "$BUILD_CONFIGURATION" --show-bin-path)/PhoneVM"
 
@@ -50,7 +55,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key>
     <string>$BUNDLE_VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$BUNDLE_VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
     <key>LSUIElement</key>
@@ -60,5 +65,10 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+if [[ "$BUILD_CONFIGURATION" == "release" ]]; then
+    strip -S "$MACOS_DIR/PhoneVM"
+    codesign --force --sign - "$APP_DIR"
+fi
 
 echo "$APP_DIR"

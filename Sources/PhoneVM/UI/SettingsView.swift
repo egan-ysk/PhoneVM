@@ -12,10 +12,14 @@ struct SettingsView: View {
 
             customDirectoriesSection
 
+            Divider()
+
+            iosScreenshotSection
+
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(minWidth: 560, minHeight: 360)
+        .frame(minWidth: 620, minHeight: 540)
     }
 
     private var header: some View {
@@ -23,8 +27,27 @@ struct SettingsView: View {
             Text("PhoneVM")
                 .font(.title2)
                 .fontWeight(.semibold)
-            Text("管理 Android 虚拟机扫描目录与快捷启动能力")
+            Text("管理虚拟机扫描目录与真机截屏")
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var iosScreenshotSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("iOS 真机截屏").font(.headline)
+            Text("设备需信任此 Mac 并开启开发者模式；首次连接请在 Xcode 中完成设备准备。")
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                TextField("pymobiledevice3 路径，留空自动检测", text: $model.iOSScreenshotToolPathInput)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { model.saveIOSScreenshotToolPath() }
+                Button("保存") { model.saveIOSScreenshotToolPath() }
+                Button("选择…") { model.chooseIOSScreenshotTool() }
+            }
+            Text(model.iOSScreenshotToolDescription)
+                .font(.caption).foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

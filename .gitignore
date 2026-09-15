@@ -10,3 +10,9 @@ dist/
 *.ipa
 *.dSYM.zip
 *.dSYM
+
+# 本地分析、剪贴板资料和个人工作记录不进入源码或发布包。
+__analyze__/
+__clips__/
+__schedule__/
+__wiki__/

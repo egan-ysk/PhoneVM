@@ -144,6 +144,7 @@ final class ProcessRunner: ProcessRunning {
 
         process.executableURL = executableURL
         process.arguments = arguments
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = standardOutput
         process.standardError = standardError
         if let environment {
